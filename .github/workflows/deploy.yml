@@ -10,44 +10,68 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 1️⃣ 코드 체크아웃
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # 2️⃣ SSH 설정
       - name: Setup SSH
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/ec2.pem
           chmod 400 ~/.ssh/ec2.pem
-          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
 
+          # known_hosts 등록 (host 비어있을 때 실패 방지)
+          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
+
+      # 3️⃣ EC2 배포
       - name: Deploy to EC2
+        env:
+          EC2_USER: ${{ secrets.EC2_USER }}
+          EC2_HOST: ${{ secrets.EC2_HOST }}
         run: |
-          ssh -i ~/.ssh/ec2.pem ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'EOF'
+          echo "🚀 Connecting to $EC2_USER@$EC2_HOST"
+
+          ssh -o StrictHostKeyChecking=no \
+              -i ~/.ssh/ec2.pem \
+              "$EC2_USER@$EC2_HOST" << EOF
+
+            set -e
+
             cd ~/vite-project
-            git pull
+            git pull origin main
             npm install
             npm run build
+
             sudo rm -rf /usr/share/nginx/html/*
             sudo cp -r dist/* /usr/share/nginx/html/
             sudo systemctl restart nginx
+
+            echo "✅ Deploy finished"
           EOF
 
-      # ✅ 성공 알림
+      # 4️⃣ 성공 알림
       - name: Notify Discord on Success
         if: success()
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: |
           curl -H "Content-Type: application/json" \
-          -d '{
-            "content": "✅ **배포 성공!**\n브랜치: main\n커밋: ${{ github.sha }}\n작성자: ${{ github.actor }}"
-          }' \
-          ${{ secrets.DISCORD_WEBHOOK_URL }}
+          -d "{
+            \"content\": \"✅ **배포 성공!**\n브랜치: main\n커밋: ${{ github.sha }}\n작성자: ${{ github.actor }}\"
+          }" \
+          "$DISCORD_WEBHOOK_URL"
 
-      # ❌ 실패 알림
+      # 5️⃣ 실패 알림
       - name: Notify Discord on Failure
         if: failure()
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: |
           curl -H "Content-Type: application/json" \
-          -d '{
-            "content": "❌ **배포 실패!**\n브랜치: main\n커밋: ${{ github.sha }}\n작성자: ${{ github.actor }}\n👉 GitHub Actions 로그 확인 필요"
-          }' \
-          ${{ secrets.DISCORD_WEBHOOK_URL }}
+          -d "{
+            \"content\": \"❌ **배포 실패!**\n브랜치: main\n커밋: ${{ github.sha }}\n작성자: ${{ github.actor }}\n👉 GitHub Actions 로그 확인 필요\"
+          }" \
+          "$DISCORD_WEBHOOK_URL"
