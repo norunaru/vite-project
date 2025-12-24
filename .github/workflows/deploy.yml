@@ -1,0 +1,53 @@
+name: Deploy to EC2
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/ec2.pem
+          chmod 400 ~/.ssh/ec2.pem
+          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy to EC2
+        run: |
+          ssh -i ~/.ssh/ec2.pem ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'EOF'
+            cd ~/vite-project
+            git pull
+            npm install
+            npm run build
+            sudo rm -rf /usr/share/nginx/html/*
+            sudo cp -r dist/* /usr/share/nginx/html/
+            sudo systemctl restart nginx
+          EOF
+
+      # ✅ 성공 알림
+      - name: Notify Discord on Success
+        if: success()
+        run: |
+          curl -H "Content-Type: application/json" \
+          -d '{
+            "content": "✅ **배포 성공!**\n브랜치: main\n커밋: ${{ github.sha }}\n작성자: ${{ github.actor }}"
+          }' \
+          ${{ secrets.DISCORD_WEBHOOK_URL }}
+
+      # ❌ 실패 알림
+      - name: Notify Discord on Failure
+        if: failure()
+        run: |
+          curl -H "Content-Type: application/json" \
+          -d '{
+            "content": "❌ **배포 실패!**\n브랜치: main\n커밋: ${{ github.sha }}\n작성자: ${{ github.actor }}\n👉 GitHub Actions 로그 확인 필요"
+          }' \
+          ${{ secrets.DISCORD_WEBHOOK_URL }}
